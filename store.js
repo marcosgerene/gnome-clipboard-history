@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import * as DS from './dataStructures.js';
 
 let EXTENSION_UUID;
-let CACHE_DIR;
+let DATA_DIR;
 const OLD_REGISTRY_FILE = GLib.build_filenamev([
   GLib.get_user_cache_dir(),
   'clipboard-indicator@tudmotu.com',
@@ -38,15 +38,54 @@ let writeStream;
 
 export function init(uuid) {
   EXTENSION_UUID = uuid;
-  CACHE_DIR = GLib.build_filenamev([GLib.get_user_cache_dir(), EXTENSION_UUID]);
-  DATABASE_FILE = GLib.build_filenamev([CACHE_DIR, 'database.log']);
+  DATA_DIR = GLib.build_filenamev([GLib.get_user_data_dir(), EXTENSION_UUID]);
+  DATABASE_FILE = GLib.build_filenamev([DATA_DIR, 'database.log']);
 
-  if (GLib.mkdir_with_parents(CACHE_DIR, 0o775) !== 0) {
+  if (GLib.mkdir_with_parents(DATA_DIR, 0o775) !== 0) {
     console.log(
       EXTENSION_UUID,
-      "Failed to create cache dir, extension likely won't work",
-      CACHE_DIR,
+      "Failed to create data dir, extension likely won't work",
+      DATA_DIR,
     );
+  }
+
+  _migrateFromCacheDir();
+}
+
+/**
+ * Older versions stored the database in the cache dir, which users (rightfully) expect to be safe
+ * to delete. Move whatever is still there into the data dir.
+ */
+function _migrateFromCacheDir() {
+  const oldDir = Gio.File.new_for_path(
+    GLib.build_filenamev([GLib.get_user_cache_dir(), EXTENSION_UUID]),
+  );
+
+  for (const name of ['database.log', 'corrupted.log']) {
+    try {
+      oldDir
+        .get_child(name)
+        .move(
+          Gio.File.new_for_path(GLib.build_filenamev([DATA_DIR, name])),
+          Gio.FileCopyFlags.NONE,
+          null,
+          null,
+        );
+    } catch (e) {
+      if (
+        !e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND) &&
+        !e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS)
+      ) {
+        console.log(EXTENSION_UUID, 'Failed to migrate', name);
+        console.error(e);
+      }
+    }
+  }
+
+  try {
+    oldDir.delete(null);
+  } catch (e) {
+    // Not found or not empty: either way, leave it alone
   }
 }
 
@@ -201,7 +240,9 @@ function _consumeStream(stream, state, callback) {
         };
 
         addEntry('Your clipboard data has been corrupted and was moved to:');
-        addEntry('~/.cache/clipboard-history@alexsaveau.dev/corrupted.log');
+        addEntry(
+          '~/.local/share/clipboard-history@alexsaveau.dev/corrupted.log',
+        );
         addEntry('Please file a bug report at:');
         addEntry(
           'https://github.com/SUPERCILEX/gnome-clipboard-history/issues/new?assignees=&labels=bug&template=1-bug.md',
@@ -211,7 +252,7 @@ function _consumeStream(stream, state, callback) {
           if (
             !Gio.File.new_for_path(DATABASE_FILE).move(
               Gio.File.new_for_path(
-                GLib.build_filenamev([CACHE_DIR, 'corrupted.log']),
+                GLib.build_filenamev([DATA_DIR, 'corrupted.log']),
               ),
               Gio.FileCopyFlags.OVERWRITE,
               null,
