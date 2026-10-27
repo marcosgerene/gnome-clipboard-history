@@ -41,6 +41,8 @@ export function init(uuid) {
   DATA_DIR = GLib.build_filenamev([GLib.get_user_data_dir(), EXTENSION_UUID]);
   DATABASE_FILE = GLib.build_filenamev([DATA_DIR, 'database.log']);
 
+  _migrateFromCacheDir();
+
   if (GLib.mkdir_with_parents(DATA_DIR, 0o775) !== 0) {
     console.log(
       EXTENSION_UUID,
@@ -48,44 +50,24 @@ export function init(uuid) {
       DATA_DIR,
     );
   }
-
-  _migrateFromCacheDir();
 }
 
 /**
  * Older versions stored the database in the cache dir, which users (rightfully) expect to be safe
- * to delete. Move whatever is still there into the data dir.
+ * to delete. Move it into the data dir.
  */
 function _migrateFromCacheDir() {
-  const oldDir = Gio.File.new_for_path(
-    GLib.build_filenamev([GLib.get_user_cache_dir(), EXTENSION_UUID]),
-  );
-
-  for (const name of ['database.log', 'corrupted.log']) {
-    try {
-      oldDir
-        .get_child(name)
-        .move(
-          Gio.File.new_for_path(GLib.build_filenamev([DATA_DIR, name])),
-          Gio.FileCopyFlags.NONE,
-          null,
-          null,
-        );
-    } catch (e) {
-      if (
-        !e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND) &&
-        !e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS)
-      ) {
-        console.log(EXTENSION_UUID, 'Failed to migrate', name);
-        console.error(e);
-      }
-    }
-  }
+  GLib.mkdir_with_parents(GLib.get_user_data_dir(), 0o775);
 
   try {
-    oldDir.delete(null);
+    Gio.File.new_for_path(
+      GLib.build_filenamev([GLib.get_user_cache_dir(), EXTENSION_UUID]),
+    ).move(Gio.File.new_for_path(DATA_DIR), Gio.FileCopyFlags.NONE, null, null);
   } catch (e) {
-    // Not found or not empty: either way, leave it alone
+    if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND)) {
+      console.log(EXTENSION_UUID, 'Failed to migrate cache dir');
+      console.error(e);
+    }
   }
 }
 
